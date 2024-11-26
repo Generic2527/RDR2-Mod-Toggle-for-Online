@@ -1,0 +1,47 @@
+﻿<Window x:Class="RDR2_Mod_Toggle_for_Online.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:RDR2_Mod_Toggle_for_Online"
+        mc:Ignorable="d"
+        Title="MainWindow" Height="450" Width="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Label Grid.Column="0" Content="Game Path:" Margin="5,5,0,5"/>
+            <TextBox Grid.Column="1" Name="tbGamePath" Margin="5,5,0,5"/>
+            <Button Grid.Column="2" Name="btnDetectPathSteam" Content="Detect (Steam)" Click="btnDetectPathSteam_Click" Margin="5,5,0,5" Padding="5,0,5,0"/>
+            <Button Grid.Column="3" Name="btnBrowse" Content="Browse" Click="btnBrowse_Click" Margin="5" Padding="5,0,5,0"/>
+        </Grid>
+
+        <Label Grid.Row="1" Content="Please select all mod files and folders."/>
+
+        <TreeView Grid.Row="2" x:Name="fileTreeView" Margin="5">
+            <TreeView.Resources>
+                <HierarchicalDataTemplate DataType="{x:Type local:FileTreeItem}" ItemsSource="{Binding Children}">
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox
+                            IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                            IsThreeState="True"
+                            PreviewMouseLeftButtonDown="CheckBox_PreviewMouseLeftButtonDown" />
+                        <Image Source="{Binding Icon}" Width="16" Height="16" Margin="5,0,0,0" />
+                        <TextBlock Text="{Binding Name}" Margin="5,0,0,0" />
+                    </StackPanel>
+                </HierarchicalDataTemplate>
+            </TreeView.Resources>
+        </TreeView>
+    </Grid>
+</Window>
