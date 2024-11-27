@@ -15,6 +15,10 @@ using System.Windows.Interop;
 using Microsoft.WindowsAPICodePack.Dialogs;
 using System.ComponentModel;
 using System.Linq;
+using System.Globalization;
+using System;
+using Newtonsoft.Json;
+using System.Collections.Generic;
 
 namespace RDR2_Mod_Toggle_for_Online
 {
@@ -23,9 +27,33 @@ namespace RDR2_Mod_Toggle_for_Online
     /// </summary>
     public partial class MainWindow : Window
     {
+        private const string CheckStateFilePath = "checkState.json";
+        private readonly string backupPath = Path.Combine(Directory.GetCurrentDirectory(), "Backup");
+
         public MainWindow()
         {
             InitializeComponent();
+            this.PreviewKeyDown += new KeyEventHandler(HandleKeyPress);
+        }
+
+        private void HandleKeyPress(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.S &&
+                (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control &&
+                (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift &&
+                (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt)
+            {
+                try
+                {
+                    GamePathStateSaver.SaveGamePathState(tbGamePath.Text);
+                    AppendLog("Game path state saved successfully.");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"An error occurred while saving game path state: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    AppendLog($"Error occurred while saving game path state: {ex.Message}");
+                }
+            }
         }
 
         private void btnDetectPathSteam_Click(object sender, RoutedEventArgs e)
@@ -36,10 +64,12 @@ namespace RDR2_Mod_Toggle_for_Online
             {
                 tbGamePath.Text = defaultPath;
                 LoadFileTree(tbGamePath.Text);
+                AppendLog("Detected game in Steam path.");
             }
             else
             {
                 MessageBox.Show("Red Dead Redemption 2 is not installed in the default Steam directory. Please click the Browse button to manually specify the installation path.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppendLog("Failed to detect game in Steam path.");
             }
         }
 
@@ -54,6 +84,7 @@ namespace RDR2_Mod_Toggle_for_Online
             if (dialog.ShowDialog() == CommonFileDialogResult.Ok)
             {
                 tbGamePath.Text = dialog.FileName;
+                AppendLog($"User selected path: {dialog.FileName}");
             }
 
             LoadFileTree(tbGamePath.Text);
@@ -64,6 +95,15 @@ namespace RDR2_Mod_Toggle_for_Online
             if (sender is CheckBox checkBox && checkBox.DataContext is FileTreeItem item)
             {
                 bool? newValue = (item.IsChecked == true) ? false : true;
+                if (newValue == true && GamePathStateSaver.IsBaseGameFile(item.GetRelativePath(tbGamePath.Text)))
+                {
+                    MessageBoxResult result = MessageBox.Show("This is a base game file. Modifying it may cause issues. Do you want to continue?", "Warning", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    if (result == MessageBoxResult.No)
+                    {
+                        e.Handled = true;
+                        return;
+                    }
+                }
                 item.SetIsChecked(newValue, true, true);
                 e.Handled = true;
             }
@@ -74,6 +114,70 @@ namespace RDR2_Mod_Toggle_for_Online
             var root = new FileTreeItem { Name = path, IsChecked = false, Icon = IconHelper.GetIcon(path, true) };
             LoadChildren(root, path);
             fileTreeView.ItemsSource = root.Children;
+
+            // Check backup folder and add missing items
+            if (Directory.Exists(backupPath))
+            {
+                AddMissingItemsFromBackup(root, backupPath, path);
+                //AppendLog("Added missing items from backup folder.");
+            }
+
+            LoadCheckState(); // Load the previous check state
+
+            // Save the game folder path to properties.settings
+            Properties.Settings.Default.gamePath = path;
+            Properties.Settings.Default.Save(); // Save the settings
+
+            AppendLog($"Loaded game folder: {path}");
+        }
+
+        private void AddMissingItemsFromBackup(FileTreeItem root, string backupPath, string gamePath)
+        {
+            foreach (var directory in Directory.GetDirectories(backupPath, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = directory.Substring(backupPath.Length + 1);
+                var gameFullPath = Path.Combine(gamePath, relativePath);
+                if (!Directory.Exists(gameFullPath))
+                {
+                    AddMissingItem(root, relativePath, true);
+                    AppendLog($"Added missing directory from backup: {relativePath}");
+                }
+            }
+
+            foreach (var file in Directory.GetFiles(backupPath, "*.*", SearchOption.AllDirectories))
+            {
+                var relativePath = file.Substring(backupPath.Length + 1);
+                var gameFullPath = Path.Combine(gamePath, relativePath);
+                if (!File.Exists(gameFullPath))
+                {
+                    AddMissingItem(root, relativePath, false);
+                    AppendLog($"Added missing file from backup: {relativePath}");
+                }
+            }
+        }
+
+        private void AddMissingItem(FileTreeItem root, string relativePath, bool isDirectory)
+        {
+            var parts = relativePath.Split(Path.DirectorySeparatorChar);
+            var current = root;
+
+            foreach (var part in parts)
+            {
+                var child = current.Children.FirstOrDefault(c => c.Name == part);
+                if (child == null)
+                {
+                    child = new FileTreeItem
+                    {
+                        Name = part,
+                        IsChecked = true,
+                        IsUnloaded = true,
+                        Icon = IconHelper.GetIcon(part, isDirectory),
+                        Parent = current
+                    };
+                    current.Children.Add(child);
+                }
+                current = child;
+            }
         }
 
         private void LoadChildren(FileTreeItem item, string path)
@@ -101,26 +205,14 @@ namespace RDR2_Mod_Toggle_for_Online
                     Parent = item
                 });
             }
-
-            UpdateCheckState(item);
-        }
-
-        private void UpdateCheckState(FileTreeItem item)
-        {
-            if (item.Children.Any())
-            {
-                bool allChecked = item.Children.All(child => child.IsChecked == true);
-                bool noneChecked = item.Children.All(child => child.IsChecked == false);
-                item.IsChecked = allChecked ? true : noneChecked ? (bool?)false : null;
-            }
         }
 
         private void btnUnloadMods_Click(object sender, RoutedEventArgs e)
         {
-            var backupPath = Path.Combine(Directory.GetCurrentDirectory(), "Backup");
             try
             {
                 BackupCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath);
+                AppendLog("Mods backup completed.");
 
                 // Remove all files and directories in the game directory
                 foreach (var item in fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>)
@@ -136,21 +228,35 @@ namespace RDR2_Mod_Toggle_for_Online
                         {
                             File.Delete(fullPath);
                         }
+                        item.SetIsUnloaded(true); // Mark as unloaded
+                        AppendLog($"Unloaded mod: {fullPath}");
                     }
                 }
 
-                MessageBox.Show("Mods have been unloaded successfully. You can restore them at any time by clicking the Load Mods button.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                SaveCheckState(); // Save the current check state
+                //AppendLog("Check state saved.");
+
+                AppendLog("Mods unloaded.");
             }
             catch (IOException ex)
             {
                 MessageBox.Show("An error occurred while unloading mods. Please make sure that the game is not running and that no files are in use.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppendLog($"Error occurred while unloading mods: {ex.Message}");
             }
         }
 
         private void btnLoadMods_Click(object sender, RoutedEventArgs e)
         {
-            var backupPath = Path.Combine(Directory.GetCurrentDirectory(), "Backup");
-            RestoreCheckedItems(backupPath, tbGamePath.Text);
+            try
+            {
+                RestoreCheckedItems(backupPath, tbGamePath.Text);
+                AppendLog("Mods loaded.");
+            }
+            catch (IOException ex)
+            {
+                MessageBox.Show("An error occurred while loading mods. Please make sure that the game is not running and that no files are in use.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                AppendLog($"Error occurred while loading mods: {ex.Message}");
+            }
         }
 
         private void BackupCheckedItems(ObservableCollection<FileTreeItem> items, string backupPath)
@@ -168,7 +274,7 @@ namespace RDR2_Mod_Toggle_for_Online
                     else if (File.Exists(sourcePath))
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-                        File.Copy(sourcePath, destinationPath, true);
+                        File.Copy(sourcePath, destinationPath, true); // Overwrite if the file already exists
                     }
                 }
                 BackupCheckedItems(item.Children, backupPath);
@@ -182,6 +288,10 @@ namespace RDR2_Mod_Toggle_for_Online
                 var relativePath = directory.Substring(backupPath.Length + 1);
                 var destinationPath = Path.Combine(restorePath, relativePath);
                 Directory.CreateDirectory(destinationPath);
+
+                // Mark the item as loaded
+                var item = FindItem(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, relativePath);
+                item?.SetIsUnloaded(false);
             }
 
             foreach (var file in Directory.GetFiles(backupPath, "*.*", SearchOption.AllDirectories))
@@ -189,6 +299,10 @@ namespace RDR2_Mod_Toggle_for_Online
                 var relativePath = file.Substring(backupPath.Length + 1);
                 var destinationPath = Path.Combine(restorePath, relativePath);
                 File.Copy(file, destinationPath, true);
+
+                // Mark the item as loaded
+                var item = FindItem(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, relativePath);
+                item?.SetIsUnloaded(false);
             }
         }
 
@@ -208,7 +322,7 @@ namespace RDR2_Mod_Toggle_for_Online
             foreach (FileInfo file in files)
             {
                 string tempPath = Path.Combine(destDirName, file.Name);
-                file.CopyTo(tempPath, false);
+                file.CopyTo(tempPath, true); // Overwrite if the file already exists
             }
 
             if (copySubDirs)
@@ -220,11 +334,90 @@ namespace RDR2_Mod_Toggle_for_Online
                 }
             }
         }
+
+        private void SaveCheckState()
+        {
+            var items = fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>;
+            var checkState = items.Select(item => new { item.Name, item.IsChecked, item.IsUnloaded }).ToList();
+            File.WriteAllText(CheckStateFilePath, JsonConvert.SerializeObject(checkState));
+            //AppendLog("Check state saved.");
+        }
+
+        private void LoadCheckState()
+        {
+            if (File.Exists(CheckStateFilePath))
+            {
+                var checkState = JsonConvert.DeserializeObject<List<dynamic>>(File.ReadAllText(CheckStateFilePath));
+                var items = fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>;
+                if (items != null)
+                {
+                    foreach (var state in checkState)
+                    {
+                        var item = items.FirstOrDefault(i => i.Name == (string)state.Name);
+                        if (item != null)
+                        {
+                            item.IsChecked = state.IsChecked;
+
+                            // Check if the file or directory exists
+                            var fullPath = item.GetFullPath();
+                            if (Directory.Exists(fullPath) || File.Exists(fullPath))
+                            {
+                                item.IsUnloaded = false;
+                            }
+                            else
+                            {
+                                item.IsUnloaded = true;
+                            }
+                        }
+                    }
+                    //AppendLog("Check state loaded.");
+                }
+                else
+                {
+                    // Handle the case where items is null
+                    // Log an error or initialize items
+                    AppendLog("Error occurred while loading check state: items is null.");
+                }
+            }
+        }
+
+        private void AppendLog(string message)
+        {
+            tbLog.AppendText($"{DateTime.Now}: {message}\n");
+            tbLog.ScrollToEnd();
+        }
+        private FileTreeItem FindItem(ObservableCollection<FileTreeItem> items, string relativePath)
+        {
+            foreach (var item in items)
+            {
+                if (item.GetRelativePath(tbGamePath.Text) == relativePath)
+                {
+                    return item;
+                }
+
+                var found = FindItem(item.Children, relativePath);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+            return null;
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(Properties.Settings.Default.gamePath))
+            {
+                tbGamePath.Text = Properties.Settings.Default.gamePath;
+                LoadFileTree(tbGamePath.Text);
+            }
+        }
     }
     public class FileTreeItem : INotifyPropertyChanged
     {
         private bool? _isChecked;
         private bool _isUpdating = false;
+        private bool _isUnloaded = false;
 
         public string Name { get; set; } = string.Empty;
         public bool? IsChecked
@@ -233,6 +426,19 @@ namespace RDR2_Mod_Toggle_for_Online
             set
             {
                 SetIsChecked(value, true, true);
+            }
+        }
+
+        public bool IsUnloaded
+        {
+            get => _isUnloaded;
+            set
+            {
+                if (_isUnloaded != value)
+                {
+                    _isUnloaded = value;
+                    OnPropertyChanged(nameof(IsUnloaded));
+                }
             }
         }
 
@@ -272,6 +478,21 @@ namespace RDR2_Mod_Toggle_for_Online
             }
         }
 
+        public void SetIsUnloaded(bool value)
+        {
+            if (_isUnloaded != value)
+            {
+                _isUnloaded = value;
+                OnPropertyChanged(nameof(IsUnloaded));
+
+                foreach (var child in Children)
+                {
+                    child.SetIsUnloaded(value);
+                }
+            }
+        }
+
+
         public void UpdateCheckStateFromChildren()
         {
             if (_isUpdating)
@@ -310,6 +531,40 @@ namespace RDR2_Mod_Toggle_for_Online
         public string GetRelativePath(string basePath)
         {
             return GetFullPath().Substring(basePath.Length + 1);
+        }
+    }
+
+    public class UnloadedToColorConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is bool isUnloaded && isUnloaded)
+            {
+                return Brushes.Gray;
+            }
+            return Brushes.Black;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    public class UnloadedToTextDecorationConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value is bool isUnloaded && isUnloaded)
+            {
+                return TextDecorations.Strikethrough;
+            }
+            return null;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            throw new NotImplementedException();
         }
     }
 }
