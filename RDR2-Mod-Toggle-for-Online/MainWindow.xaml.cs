@@ -227,6 +227,7 @@ namespace RDR2_Mod_Toggle_for_Online
         {
             try
             {
+                AppendLog("Unloading mods...");
                 await Task.Run(() => BackupCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath));
                 AppendLog("Mods backup completed.");
 
@@ -269,6 +270,7 @@ namespace RDR2_Mod_Toggle_for_Online
             try
             {
                 string gamePath = tbGamePath.Text;
+                AppendLog("Loading mods...");
                 await Task.Run(() => RestoreCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath, gamePath));
                 AppendLog("Mods loaded.");
             }
