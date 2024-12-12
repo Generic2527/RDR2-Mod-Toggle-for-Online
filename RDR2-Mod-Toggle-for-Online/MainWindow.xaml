@@ -5,12 +5,13 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RDR2_Mod_Toggle_for_Online"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
+        Title="RDR2 Mod Toggle for Online" Height="450" Width="800">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
@@ -43,5 +44,15 @@
                 </HierarchicalDataTemplate>
             </TreeView.Resources>
         </TreeView>
+
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Button Grid.Column="0" Name="btnUnloadMods" Content="Unload Mods (to Online)" Margin="5,5,0,5" Padding="5" Click="btnUnloadMods_Click"/>
+            <Button Grid.Column="1" Name="btnLoadMods" Content="Load Mods (to Story)" Margin="5" Padding="5" Click="btnLoadMods_Click"/>
+        </Grid>
     </Grid>
 </Window>

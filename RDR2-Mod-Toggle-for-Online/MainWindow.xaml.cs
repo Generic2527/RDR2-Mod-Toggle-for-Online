@@ -32,7 +32,6 @@ namespace RDR2_Mod_Toggle_for_Online
         {
             string defaultPath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Red Dead Redemption 2";
 
-            // if "RDR2.exe" exists in the default path then set the path to the default path
             if (System.IO.File.Exists(defaultPath + "\\RDR2.exe"))
             {
                 tbGamePath.Text = defaultPath;
@@ -46,7 +45,6 @@ namespace RDR2_Mod_Toggle_for_Online
 
         private void btnBrowse_Click(object sender, RoutedEventArgs e)
         {
-            // 폴더 브라우저 다이얼로그를 사용하여 경로 선택
             var dialog = new CommonOpenFileDialog
             {
                 IsFolderPicker = true,
@@ -60,17 +58,13 @@ namespace RDR2_Mod_Toggle_for_Online
 
             LoadFileTree(tbGamePath.Text);
         }
+
         private void CheckBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is CheckBox checkBox && checkBox.DataContext is FileTreeItem item)
             {
-                // 현재 체크 상태에 따라 토글
                 bool? newValue = (item.IsChecked == true) ? false : true;
-
-                // SetIsChecked 메서드를 사용하여 업데이트
                 item.SetIsChecked(newValue, true, true);
-
-                // 이벤트가 계속 전달되지 않도록 처리
                 e.Handled = true;
             }
         }
@@ -91,7 +85,7 @@ namespace RDR2_Mod_Toggle_for_Online
                     Name = Path.GetFileName(directory),
                     IsChecked = false,
                     Icon = IconHelper.GetIcon(directory, true),
-                    Parent = item // Parent 속성 설정
+                    Parent = item
                 };
                 LoadChildren(dirItem, directory);
                 item.Children.Add(dirItem);
@@ -118,6 +112,112 @@ namespace RDR2_Mod_Toggle_for_Online
                 bool allChecked = item.Children.All(child => child.IsChecked == true);
                 bool noneChecked = item.Children.All(child => child.IsChecked == false);
                 item.IsChecked = allChecked ? true : noneChecked ? (bool?)false : null;
+            }
+        }
+
+        private void btnUnloadMods_Click(object sender, RoutedEventArgs e)
+        {
+            var backupPath = Path.Combine(Directory.GetCurrentDirectory(), "Backup");
+            try
+            {
+                BackupCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath);
+
+                // Remove all files and directories in the game directory
+                foreach (var item in fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>)
+                {
+                    if (item.IsChecked == true)
+                    {
+                        var fullPath = item.GetFullPath();
+                        if (Directory.Exists(fullPath))
+                        {
+                            Directory.Delete(fullPath, true);
+                        }
+                        else if (File.Exists(fullPath))
+                        {
+                            File.Delete(fullPath);
+                        }
+                    }
+                }
+
+                MessageBox.Show("Mods have been unloaded successfully. You can restore them at any time by clicking the Load Mods button.", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (IOException ex)
+            {
+                MessageBox.Show("An error occurred while unloading mods. Please make sure that the game is not running and that no files are in use.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void btnLoadMods_Click(object sender, RoutedEventArgs e)
+        {
+            var backupPath = Path.Combine(Directory.GetCurrentDirectory(), "Backup");
+            RestoreCheckedItems(backupPath, tbGamePath.Text);
+        }
+
+        private void BackupCheckedItems(ObservableCollection<FileTreeItem> items, string backupPath)
+        {
+            foreach (var item in items)
+            {
+                if (item.IsChecked == true)
+                {
+                    var sourcePath = item.GetFullPath();
+                    var destinationPath = Path.Combine(backupPath, item.GetRelativePath(tbGamePath.Text));
+                    if (Directory.Exists(sourcePath))
+                    {
+                        DirectoryCopy(sourcePath, destinationPath, true);
+                    }
+                    else if (File.Exists(sourcePath))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                        File.Copy(sourcePath, destinationPath, true);
+                    }
+                }
+                BackupCheckedItems(item.Children, backupPath);
+            }
+        }
+
+        private void RestoreCheckedItems(string backupPath, string restorePath)
+        {
+            foreach (var directory in Directory.GetDirectories(backupPath, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = directory.Substring(backupPath.Length + 1);
+                var destinationPath = Path.Combine(restorePath, relativePath);
+                Directory.CreateDirectory(destinationPath);
+            }
+
+            foreach (var file in Directory.GetFiles(backupPath, "*.*", SearchOption.AllDirectories))
+            {
+                var relativePath = file.Substring(backupPath.Length + 1);
+                var destinationPath = Path.Combine(restorePath, relativePath);
+                File.Copy(file, destinationPath, true);
+            }
+        }
+
+        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
+        {
+            DirectoryInfo dir = new DirectoryInfo(sourceDirName);
+            DirectoryInfo[] dirs = dir.GetDirectories();
+
+            if (!dir.Exists)
+            {
+                throw new DirectoryNotFoundException("Source directory does not exist or could not be found: " + sourceDirName);
+            }
+
+            Directory.CreateDirectory(destDirName);
+
+            FileInfo[] files = dir.GetFiles();
+            foreach (FileInfo file in files)
+            {
+                string tempPath = Path.Combine(destDirName, file.Name);
+                file.CopyTo(tempPath, false);
+            }
+
+            if (copySubDirs)
+            {
+                foreach (DirectoryInfo subdir in dirs)
+                {
+                    string tempPath = Path.Combine(destDirName, subdir.Name);
+                    DirectoryCopy(subdir.FullName, tempPath, copySubDirs);
+                }
             }
         }
     }
@@ -152,7 +252,6 @@ namespace RDR2_Mod_Toggle_for_Online
                 {
                     _isUpdating = true;
 
-                    // 자식들에게 체크 상태 전파
                     if (updateChildren && _isChecked.HasValue)
                     {
                         foreach (var child in Children)
@@ -161,7 +260,6 @@ namespace RDR2_Mod_Toggle_for_Online
                         }
                     }
 
-                    // 부모의 체크 상태 업데이트
                     if (updateParent)
                     {
                         Parent?.UpdateCheckStateFromChildren();
@@ -169,7 +267,6 @@ namespace RDR2_Mod_Toggle_for_Online
 
                     _isUpdating = false;
 
-                    // 변경 알림
                     OnPropertyChanged(nameof(IsChecked));
                 }
             }
@@ -192,7 +289,6 @@ namespace RDR2_Mod_Toggle_for_Online
                     _isChecked = state;
                     OnPropertyChanged(nameof(IsChecked));
 
-                    // 부모에게 전파
                     Parent?.UpdateCheckStateFromChildren();
                 }
             }
@@ -204,6 +300,16 @@ namespace RDR2_Mod_Toggle_for_Online
             {
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
             }
+        }
+
+        public string GetFullPath()
+        {
+            return Parent == null ? Name : Path.Combine(Parent.GetFullPath(), Name);
+        }
+
+        public string GetRelativePath(string basePath)
+        {
+            return GetFullPath().Substring(basePath.Length + 1);
         }
     }
 }
