@@ -19,6 +19,7 @@ using System.Globalization;
 using System;
 using Newtonsoft.Json;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace RDR2_Mod_Toggle_for_Online
 {
@@ -124,6 +125,9 @@ namespace RDR2_Mod_Toggle_for_Online
 
             LoadCheckState(); // Load the previous check state
 
+            // Ensure all items in the backup folder are checked
+            CheckBackupItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath);
+
             // Save the game folder path to properties.settings
             Properties.Settings.Default.gamePath = path;
             Properties.Settings.Default.Save(); // Save the settings
@@ -154,6 +158,17 @@ namespace RDR2_Mod_Toggle_for_Online
                     AppendLog($"Added missing file from backup: {relativePath}");
                 }
             }
+
+            // Update the check state and unloaded state of all parent items
+            UpdateParentCheckState(root);
+        }
+        private void UpdateParentCheckState(FileTreeItem item)
+        {
+            foreach (var child in item.Children)
+            {
+                UpdateParentCheckState(child);
+            }
+            item.UpdateCheckStateFromChildren();
         }
 
         private void AddMissingItem(FileTreeItem root, string relativePath, bool isDirectory)
@@ -166,12 +181,13 @@ namespace RDR2_Mod_Toggle_for_Online
                 var child = current.Children.FirstOrDefault(c => c.Name == part);
                 if (child == null)
                 {
+                    var fullPath = Path.Combine(current.GetFullPath(), part);
                     child = new FileTreeItem
                     {
                         Name = part,
                         IsChecked = true,
                         IsUnloaded = true,
-                        Icon = IconHelper.GetIcon(part, isDirectory),
+                        Icon = IconHelper.GetIcon(fullPath, isDirectory), // 아이콘 설정
                         Parent = current
                     };
                     current.Children.Add(child);
@@ -207,34 +223,37 @@ namespace RDR2_Mod_Toggle_for_Online
             }
         }
 
-        private void btnUnloadMods_Click(object sender, RoutedEventArgs e)
+        private async void btnUnloadMods_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                BackupCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath);
+                await Task.Run(() => BackupCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath));
                 AppendLog("Mods backup completed.");
 
                 // Remove all files and directories in the game directory
-                foreach (var item in fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>)
+                await Task.Run(() =>
                 {
-                    if (item.IsChecked == true)
+                    foreach (var item in fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>)
                     {
-                        var fullPath = item.GetFullPath();
-                        if (Directory.Exists(fullPath))
+                        if (item.IsChecked == true)
                         {
-                            Directory.Delete(fullPath, true);
+                            var fullPath = item.GetFullPath();
+                            if (Directory.Exists(fullPath))
+                            {
+                                Directory.Delete(fullPath, true);
+                            }
+                            else if (File.Exists(fullPath))
+                            {
+                                File.Delete(fullPath);
+                            }
+                            item.SetIsUnloaded(true); // Mark as unloaded
+                            AppendLog($"Unloaded mod: {fullPath}");
                         }
-                        else if (File.Exists(fullPath))
-                        {
-                            File.Delete(fullPath);
-                        }
-                        item.SetIsUnloaded(true); // Mark as unloaded
-                        AppendLog($"Unloaded mod: {fullPath}");
                     }
-                }
+                });
 
                 SaveCheckState(); // Save the current check state
-                //AppendLog("Check state saved.");
+                                  //AppendLog("Check state saved.");
 
                 AppendLog("Mods unloaded.");
             }
@@ -245,11 +264,12 @@ namespace RDR2_Mod_Toggle_for_Online
             }
         }
 
-        private void btnLoadMods_Click(object sender, RoutedEventArgs e)
+        private async void btnLoadMods_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                RestoreCheckedItems(backupPath, tbGamePath.Text);
+                string gamePath = tbGamePath.Text;
+                await Task.Run(() => RestoreCheckedItems(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, backupPath, gamePath));
                 AppendLog("Mods loaded.");
             }
             catch (IOException ex)
@@ -266,7 +286,14 @@ namespace RDR2_Mod_Toggle_for_Online
                 if (item.IsChecked == true)
                 {
                     var sourcePath = item.GetFullPath();
-                    var destinationPath = Path.Combine(backupPath, item.GetRelativePath(tbGamePath.Text));
+                    string destinationPath = null;
+
+                    // Access tbGamePath.Text on the UI thread
+                    Dispatcher.Invoke(() =>
+                    {
+                        destinationPath = Path.Combine(backupPath, item.GetRelativePath(tbGamePath.Text));
+                    });
+
                     if (Directory.Exists(sourcePath))
                     {
                         DirectoryCopy(sourcePath, destinationPath, true);
@@ -281,28 +308,30 @@ namespace RDR2_Mod_Toggle_for_Online
             }
         }
 
-        private void RestoreCheckedItems(string backupPath, string restorePath)
+        private void RestoreCheckedItems(ObservableCollection<FileTreeItem> items, string backupPath, string restorePath)
         {
-            foreach (var directory in Directory.GetDirectories(backupPath, "*", SearchOption.AllDirectories))
+            foreach (var item in items)
             {
-                var relativePath = directory.Substring(backupPath.Length + 1);
-                var destinationPath = Path.Combine(restorePath, relativePath);
-                Directory.CreateDirectory(destinationPath);
+                if (item.IsChecked == true)
+                {
+                    var relativePath = item.GetRelativePath(restorePath);
+                    var sourcePath = Path.Combine(backupPath, relativePath);
+                    var destinationPath = Path.Combine(restorePath, relativePath);
 
-                // Mark the item as loaded
-                var item = FindItem(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, relativePath);
-                item?.SetIsUnloaded(false);
-            }
+                    if (Directory.Exists(sourcePath))
+                    {
+                        DirectoryCopy(sourcePath, destinationPath, true);
+                    }
+                    else if (File.Exists(sourcePath))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                        File.Copy(sourcePath, destinationPath, true);
+                    }
 
-            foreach (var file in Directory.GetFiles(backupPath, "*.*", SearchOption.AllDirectories))
-            {
-                var relativePath = file.Substring(backupPath.Length + 1);
-                var destinationPath = Path.Combine(restorePath, relativePath);
-                File.Copy(file, destinationPath, true);
+                    item.SetIsUnloaded(false);
+                }
 
-                // Mark the item as loaded
-                var item = FindItem(fileTreeView.ItemsSource as ObservableCollection<FileTreeItem>, relativePath);
-                item?.SetIsUnloaded(false);
+                RestoreCheckedItems(item.Children, backupPath, restorePath);
             }
         }
 
@@ -370,27 +399,58 @@ namespace RDR2_Mod_Toggle_for_Online
                             }
                         }
                     }
-                    //AppendLog("Check state loaded.");
                 }
                 else
                 {
-                    // Handle the case where items is null
-                    // Log an error or initialize items
                     AppendLog("Error occurred while loading check state: items is null.");
                 }
             }
         }
 
+        private void CheckBackupItems(ObservableCollection<FileTreeItem> items, string backupPath)
+        {
+            foreach (var directory in Directory.GetDirectories(backupPath, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = directory.Substring(backupPath.Length + 1);
+                var item = FindItem(items, relativePath);
+                if (item != null)
+                {
+                    item.IsChecked = true;
+                }
+            }
+
+            foreach (var file in Directory.GetFiles(backupPath, "*.*", SearchOption.AllDirectories))
+            {
+                var relativePath = file.Substring(backupPath.Length + 1);
+                var item = FindItem(items, relativePath);
+                if (item != null)
+                {
+                    item.IsChecked = true;
+                }
+            }
+        }
+
+
         private void AppendLog(string message)
         {
-            tbLog.AppendText($"{DateTime.Now}: {message}\n");
-            tbLog.ScrollToEnd();
+            if (tbLog.Dispatcher.CheckAccess())
+            {
+                tbLog.AppendText($"{DateTime.Now}: {message}\n");
+                tbLog.ScrollToEnd();
+            }
+            else
+            {
+                tbLog.Dispatcher.Invoke(() => AppendLog(message));
+            }
         }
         private FileTreeItem FindItem(ObservableCollection<FileTreeItem> items, string relativePath)
         {
+            string gamePathText = string.Empty;
+            Dispatcher.Invoke(() => gamePathText = tbGamePath.Text);
+
             foreach (var item in items)
             {
-                if (item.GetRelativePath(tbGamePath.Text) == relativePath)
+                if (item.GetRelativePath(gamePathText) == relativePath)
                 {
                     return item;
                 }
@@ -502,6 +562,7 @@ namespace RDR2_Mod_Toggle_for_Online
             {
                 bool allChecked = Children.All(c => c.IsChecked == true);
                 bool noneChecked = Children.All(c => c.IsChecked == false);
+                bool allUnloaded = Children.All(c => c.IsUnloaded == true);
 
                 bool? state = allChecked ? true : noneChecked ? (bool?)false : null;
 
@@ -509,9 +570,15 @@ namespace RDR2_Mod_Toggle_for_Online
                 {
                     _isChecked = state;
                     OnPropertyChanged(nameof(IsChecked));
-
-                    Parent?.UpdateCheckStateFromChildren();
                 }
+
+                if (_isUnloaded != allUnloaded)
+                {
+                    _isUnloaded = allUnloaded;
+                    OnPropertyChanged(nameof(IsUnloaded));
+                }
+
+                Parent?.UpdateCheckStateFromChildren();
             }
         }
 
