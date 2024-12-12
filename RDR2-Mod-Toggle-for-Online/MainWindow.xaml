@@ -5,12 +5,18 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RDR2_Mod_Toggle_for_Online"
         mc:Ignorable="d"
-        Title="RDR2 Mod Toggle for Online" Height="450" Width="800">
+        Title="RDR2 Mod Toggle for Online" Height="600" Width="800"
+        Loaded="Window_Loaded">
+    <Window.Resources>
+        <local:UnloadedToTextDecorationConverter x:Key="UnloadedToTextDecorationConverter"/>
+        <local:UnloadedToColorConverter x:Key="UnloadedToColorConverter"/>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -39,7 +45,9 @@
                             IsThreeState="True"
                             PreviewMouseLeftButtonDown="CheckBox_PreviewMouseLeftButtonDown" />
                         <Image Source="{Binding Icon}" Width="16" Height="16" Margin="5,0,0,0" />
-                        <TextBlock Text="{Binding Name}" Margin="5,0,0,0" />
+                        <TextBlock Text="{Binding Name}" Margin="2"
+                                   Foreground="{Binding IsUnloaded, Converter={StaticResource UnloadedToColorConverter}}"
+                                   TextDecorations="{Binding IsUnloaded, Converter={StaticResource UnloadedToTextDecorationConverter}}"/>
                     </StackPanel>
                 </HierarchicalDataTemplate>
             </TreeView.Resources>
@@ -54,5 +62,7 @@
             <Button Grid.Column="0" Name="btnUnloadMods" Content="Unload Mods (to Online)" Margin="5,5,0,5" Padding="5" Click="btnUnloadMods_Click"/>
             <Button Grid.Column="1" Name="btnLoadMods" Content="Load Mods (to Story)" Margin="5" Padding="5" Click="btnLoadMods_Click"/>
         </Grid>
+
+        <TextBox Grid.Row="4" IsReadOnly="True" Name="tbLog" TextWrapping="Wrap" Margin="5" Height="100" VerticalScrollBarVisibility="Auto"/>
     </Grid>
 </Window>
